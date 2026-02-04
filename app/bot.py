@@ -87,16 +87,18 @@ def _parse_signal_args(args: list[str]) -> dict[str, float | str | None]:
 
 
 def _signal_to_message(signal: dict[str, float | str | None]) -> str:
+    ticker = _extract_ticker(str(signal["symbol"]))
+    side = str(signal["side"]).upper()
+    side_icon = "🟢" if side == "BUY" else "🔴"
     limit_line = ""
-    if signal["limit_price"] is not None:
-        limit_line = f"LIMIT: {signal['limit_price']}\n"
+    if signal["order_type"] == "LIMIT" and signal["limit_price"] is not None:
+        limit_line = f"<b>LIMIT:</b> ${signal['limit_price']}\n"
     return (
-        "Signal:\n"
-        f"{signal['symbol']} {signal['side']} {signal['order_type']}\n"
-        f"Reference size (USD): {signal['notional_usd']}\n"
-        f"TP: {signal['take_profit']} | SL: {signal['stop_loss']}\n"
-        f"{limit_line}\n"
-        "Press 'Copy' to proceed (TP/SL included)."
+        f"{side_icon} <b>{ticker} {side}</b> {side_icon}\n\n"
+        f"{limit_line}"
+        f"<b>Size:</b> ${signal['notional_usd']}\n"
+        f"<b>TP:</b> ${signal['take_profit']} | <b>SL:</b> ${signal['stop_loss']}\n\n"
+        "<i>Press 'Copy' to proceed (TP/SL included).</i>"
     )
 
 
@@ -153,6 +155,13 @@ def _parse_signalform(text: str) -> dict[str, float | str | None]:
     }
 
 
+def _extract_ticker(symbol: str) -> str:
+    cleaned = symbol.upper()
+    if cleaned.startswith("PERP_"):
+        cleaned = cleaned[5:]
+    return cleaned.split("_", 1)[0]
+
+
 def _store_signal(context: ContextTypes.DEFAULT_TYPE, signal: dict[str, float | str | None]) -> str:
     signal_id = str(uuid.uuid4())[:8]
     context.bot_data.setdefault("signals", {})[signal_id] = signal
@@ -172,6 +181,7 @@ async def _publish_signal(
     await update.message.reply_text(
         _signal_to_message(signal),
         reply_markup=keyboard,
+        parse_mode="HTML",
     )
 
 
@@ -198,14 +208,20 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await update.message.reply_text("This signal is no longer available.")
             return
 
-        text = (
-            "Senal recibida:\n"
-            f"{signal['symbol']} {signal['side']} {signal['order_type']}\n"
-            f"Size referencia (USD): {signal['notional_usd']}\n"
-            f"TP: {signal['take_profit']} | SL: {signal['stop_loss']}\n"
-        )
+        ticker = _extract_ticker(str(signal["symbol"]))
+        side = str(signal["side"]).upper()
+        side_icon = "🟢" if side == "BUY" else "🔴"
+        limit_line = ""
         if signal["order_type"] == "LIMIT" and signal.get("limit_price") is not None:
-            text += f"LIMIT: {signal['limit_price']}\n"
+            limit_line = f"<b>LIMIT:</b> ${signal['limit_price']}\n"
+        text = (
+            "Signal received:\n"
+            f"{side_icon} <b>{ticker} {side}</b> {side_icon}\n\n"
+            f"{limit_line}"
+            f"<b>Size:</b> ${signal['notional_usd']}\n"
+            f"<b>TP:</b> ${signal['take_profit']} | <b>SL:</b> ${signal['stop_loss']}\n\n"
+            "<i>Press 'Copy' to proceed (TP/SL included).</i>"
+        )
 
         keyboard = InlineKeyboardMarkup(
             [
@@ -241,7 +257,11 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 ],
             ]
         )
-        await update.message.reply_text(text, reply_markup=keyboard)
+        await update.message.reply_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode="HTML",
+        )
         return
 
     await update.message.reply_text("Hi! Use /help to see available commands.")
