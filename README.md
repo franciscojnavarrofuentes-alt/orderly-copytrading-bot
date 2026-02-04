@@ -5,6 +5,7 @@ Telegram bot to copy signals on Orderly. Only group admins can publish signals; 
 ## Requirements
 - Python 3.10+
 - Telegram bot token
+- Discord bot token (for Discord deployment)
 - Orderly credentials per user
 
 ## Project hygiene
@@ -16,6 +17,7 @@ Telegram bot to copy signals on Orderly. Only group admins can publish signals; 
 ```env
 TELEGRAM_BOT_TOKEN=tu_token
 TELEGRAM_BOT_USERNAME=Orderly_copy_bot
+DISCORD_BOT_TOKEN=your_discord_token
 MASTER_KEY=tu_fernet_key
 ORDERLY_BASE_URL=https://api.orderly.org
 DATABASE_PATH=orderly_copytrading.db
@@ -38,6 +40,28 @@ pip install -r requirements.txt
 ## Run
 ```bash
 python -m app
+```
+
+## Run (Discord)
+```bash
+python -m app.discord_main
+```
+
+## Discord setup (quick)
+1. Create a Discord application and bot.
+2. Enable the **Message Content Intent** if you want to use message-based commands (not required for slash commands).
+3. Invite the bot with these scopes:
+   - `bot`
+   - `applications.commands`
+4. Recommended bot permissions:
+   - Send Messages
+   - Read Message History
+   - Use Slash Commands
+   - Manage Messages (optional, only if you want the bot to delete the command message)
+
+Example invite URL format:
+```
+https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=274877990912&scope=bot%20applications.commands
 ```
 
 ## Telegram usage
@@ -73,6 +97,9 @@ LIMIT=2050
    - The bot opens in private with the prefilled signal.
    - You can copy the suggested amount or a percentage.
    - For a custom amount, send `/copyusd <SIGNAL_ID> <USD>`.
+
+## Candlestick chart (Telegram)
+The bot fetches public TradingView-style kline data to render the candlestick chart.
 
 ## Security notes
 - Keys are stored encrypted in SQLite using `MASTER_KEY`.

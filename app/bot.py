@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+import time
 import uuid
 from typing import Optional
 
@@ -16,6 +17,7 @@ from telegram.ext import (
     filters,
 )
 
+from app.chart import SignalLevels, render_candlestick_chart, render_signal_chart
 from app.orderly import OrderlyClient, OrderlyOrder
 from app.storage import Storage
 
@@ -92,11 +94,11 @@ def _signal_to_message(signal: dict[str, float | str | None]) -> str:
     side = str(signal["side"]).upper()
     side_icon = "🟢" if side == "BUY" else "🔴"
     limit_line = ""
+    price_line = ""
     if signal["order_type"] == "LIMIT" and signal["limit_price"] is not None:
         limit_line = f"<b>LIMIT:</b> ${signal['limit_price']}\n"
-    price_line = ""
-    if signal["order_type"] == "MARKET" and signal.get("market_price") is not None:
-        price_line = f"<b>Price:</b> ${signal['market_price']}\n"
+        if signal.get("market_price") is not None:
+            price_line = f"<b>Mark:</b> ${signal['market_price']}\n"
     title = f"{ticker} {side}"
     if signal["order_type"] == "MARKET":
         title = f"{ticker} - Market {side}"
@@ -182,9 +184,9 @@ async def _publish_signal(
     signal: dict[str, float | str | None],
 ) -> None:
     price_ref = None
+    client: OrderlyClient = context.bot_data["orderly_client"]
     if signal.get("order_type") == "MARKET":
         if signal.get("market_price") is None:
-            client: OrderlyClient = context.bot_data["orderly_client"]
             try:
                 market_price = await asyncio.to_thread(
                     client.get_mark_price, str(signal["symbol"])
@@ -200,6 +202,13 @@ async def _publish_signal(
         price_ref = float(signal["market_price"])
     else:
         price_ref = float(signal["limit_price"])
+        if signal.get("market_price") is None:
+            try:
+                signal["market_price"] = await asyncio.to_thread(
+                    client.get_mark_price, str(signal["symbol"])
+                )
+            except Exception:  # noqa: BLE001
+                signal["market_price"] = None
 
     side = str(signal["side"]).upper()
     tp = float(signal["take_profit"])
@@ -222,11 +231,56 @@ async def _publish_signal(
     link = f"https://t.me/{bot_username}?start=copy_{signal_id}"
     button = InlineKeyboardButton("Copy", url=link)
     keyboard = InlineKeyboardMarkup([[button]])
-    await update.message.reply_text(
-        _signal_to_message(signal),
-        reply_markup=keyboard,
-        parse_mode="HTML",
-    )
+    caption = _signal_to_message(signal)
+    try:
+        levels = SignalLevels(
+            entry=price_ref,
+            take_profit=tp,
+            stop_loss=sl,
+            current=signal.get("market_price") if signal["order_type"] == "LIMIT" else None,
+        )
+        title = f"{_extract_ticker(str(signal['symbol']))} {signal['side']}"
+        chart_bytes = None
+        try:
+            rows = await asyncio.to_thread(
+                context.bot_data["orderly_client"].get_tv_history,
+                str(signal["symbol"]),
+                "1h",
+                100,
+                int(time.time()),
+            )
+            timestamps = []
+            candles = [
+                {
+                    "open": float(r["open"]),
+                    "high": float(r["high"]),
+                    "low": float(r["low"]),
+                    "close": float(r["close"]),
+                }
+                for r in rows
+            ]
+            timestamps = [int(r.get("ts")) for r in rows]
+            chart_bytes = await asyncio.to_thread(
+                render_candlestick_chart, candles, levels, title, timestamps
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Candlestick fetch/render failed: %s", exc)
+            chart_bytes = None
+
+        if chart_bytes is None:
+            chart_bytes = await asyncio.to_thread(render_signal_chart, levels, title)
+        await update.message.reply_photo(
+            photo=chart_bytes,
+            caption=caption,
+            reply_markup=keyboard,
+            parse_mode="HTML",
+        )
+    except Exception:  # noqa: BLE001
+        await update.message.reply_text(
+            caption,
+            reply_markup=keyboard,
+            parse_mode="HTML",
+        )
 
 
 async def _try_delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -269,11 +323,11 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         side = str(signal["side"]).upper()
         side_icon = "🟢" if side == "BUY" else "🔴"
         limit_line = ""
+        price_line = ""
         if signal["order_type"] == "LIMIT" and signal.get("limit_price") is not None:
             limit_line = f"<b>LIMIT:</b> ${signal['limit_price']}\n"
-        price_line = ""
-        if signal["order_type"] == "MARKET" and signal.get("market_price") is not None:
-            price_line = f"<b>Price:</b> ${signal['market_price']}\n"
+            if signal.get("market_price") is not None:
+                price_line = f"<b>Mark:</b> ${signal['market_price']}\n"
         title = f"{ticker} {side}"
         if signal["order_type"] == "MARKET":
             title = f"{ticker} - Market {side}"

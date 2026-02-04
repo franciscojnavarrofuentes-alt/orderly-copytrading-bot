@@ -181,3 +181,130 @@ class OrderlyClient:
             raise RuntimeError(
                 f"Invalid JSON response ({response.status_code}): {response.text}"
             ) from exc
+
+    def get_kline_history(
+        self,
+        orderly_account_id: str,
+        orderly_key: str,
+        orderly_secret: str,
+        symbol: str,
+        resolution: str,
+        limit: int,
+        to_ts: int,
+    ) -> list[dict[str, Any]]:
+        seconds_per_candle = {
+            "1m": 60,
+            "5m": 300,
+            "15m": 900,
+            "1h": 3600,
+            "4h": 14400,
+            "1d": 86400,
+        }
+        if resolution not in seconds_per_candle:
+            raise RuntimeError("Unsupported resolution.")
+
+        from_ts = to_ts - seconds_per_candle[resolution] * limit
+        path = "/v1/tv/kline_history"
+        query = (
+            f"symbol={symbol}&resolution={resolution}"
+            f"&from={from_ts}&to={to_ts}&limit={limit}"
+        )
+        url = f"{self._base_url}{path}?{query}"
+        timestamp_ms = int(time.time() * 1000)
+        message = self._build_message(
+            timestamp_ms, "GET", f"{path}?{query}", None
+        )
+        signature = self._sign(orderly_secret, message)
+        headers = {
+            "Content-Type": "application/json",
+            "orderly-account-id": orderly_account_id,
+            "orderly-key": orderly_key,
+            "orderly-signature": signature,
+            "orderly-timestamp": str(timestamp_ms),
+        }
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        rows = data.get("data", {}).get("rows", [])
+        if not rows:
+            raise RuntimeError("No kline rows returned.")
+        return rows
+
+    def get_tv_history(
+        self,
+        symbol: str,
+        resolution: str,
+        limit: int,
+        to_ts: int,
+    ) -> list[dict[str, Any]]:
+        seconds_per_candle = {
+            "1m": 60,
+            "5m": 300,
+            "15m": 900,
+            "30m": 1800,
+            "1h": 3600,
+            "4h": 14400,
+            "1d": 86400,
+            "1w": 604800,
+        }
+        tv_resolution = {
+            "1m": "1",
+            "5m": "5",
+            "15m": "15",
+            "30m": "30",
+            "1h": "60",
+            "4h": "240",
+            "1d": "1D",
+            "1w": "1W",
+        }
+        if resolution not in seconds_per_candle:
+            raise RuntimeError("Unsupported resolution.")
+
+        from_ts = to_ts - seconds_per_candle[resolution] * limit
+        path = "/v1/tv/history"
+
+        def _fetch(tv_symbol: str) -> list[dict[str, Any]] | None:
+            query = (
+                f"symbol={tv_symbol}&resolution={tv_resolution[resolution]}"
+                f"&from={from_ts}&to={to_ts}"
+            )
+            url = f"{self._base_url}{path}?{query}"
+            response = requests.get(url, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            if data.get("s") != "ok":
+                return None
+            timestamps = data.get("t", [])
+            if not timestamps:
+                return None
+            opens = data.get("o", [])
+            highs = data.get("h", [])
+            lows = data.get("l", [])
+            closes = data.get("c", [])
+            rows = []
+            for idx, ts in enumerate(timestamps):
+                rows.append(
+                    {
+                        "ts": ts,
+                        "open": opens[idx],
+                        "high": highs[idx],
+                        "low": lows[idx],
+                        "close": closes[idx],
+                    }
+                )
+            return rows
+
+        candidates = [symbol]
+        if not symbol.endswith(".e"):
+            candidates.append(f"{symbol}.e")
+        if symbol.startswith("PERP_"):
+            base = symbol.replace("PERP_", "")
+            candidates.append(base)
+            candidates.append(f"{base}.e")
+
+        for candidate in candidates:
+            rows = _fetch(candidate)
+            if rows:
+                return rows
+
+        raise RuntimeError("No kline rows returned.")
