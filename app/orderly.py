@@ -45,15 +45,32 @@ class OrderlyClient:
         return base64.urlsafe_b64encode(signature).decode("utf-8")
 
     def get_mark_price(self, symbol: str) -> float:
+        # Try direct symbol endpoint first.
         path = f"/v1/public/futures/{symbol}"
         url = f"{self._base_url}{path}"
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         data = response.json()
         rows = data.get("data", {}).get("rows", [])
+        if rows:
+            return float(rows[0]["mark_price"])
+
+        # Fallback: fetch all markets and try to match exact or suffix variants.
+        fallback_url = f"{self._base_url}/v1/public/futures"
+        response = requests.get(fallback_url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        rows = data.get("data", {}).get("rows", [])
         if not rows:
             raise RuntimeError("No market data rows returned.")
-        return float(rows[0]["mark_price"])
+
+        symbol_upper = symbol.upper()
+        for row in rows:
+            row_symbol = str(row.get("symbol", "")).upper()
+            if row_symbol == symbol_upper or row_symbol.startswith(symbol_upper + "."):
+                return float(row["mark_price"])
+
+        raise RuntimeError(f"Symbol not found in market data: {symbol}")
 
     def get_order_rules(self, symbol: str) -> dict[str, Any]:
         path = f"/v1/public/info/{symbol}"
