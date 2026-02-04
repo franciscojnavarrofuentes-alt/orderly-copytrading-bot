@@ -21,6 +21,7 @@ from app.storage import Storage
 logger = logging.getLogger(__name__)
 
 ACCOUNT_ID_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
+ACCOUNT_ID_32B_RE = re.compile(r"^0x[a-fA-F0-9]{64}$")
 ORDERLY_KEY_RE = re.compile(r"^ed25519:[A-Za-z0-9+/=]+$")
 
 
@@ -37,8 +38,8 @@ def _format_register_help() -> str:
 
 
 def _validate_register_args(account_id: str, orderly_key: str, orderly_secret: str) -> Optional[str]:
-    if not ACCOUNT_ID_RE.match(account_id):
-        return "Invalid ACCOUNT_ID. It must be a 0x... 40-hex address."
+    if not (ACCOUNT_ID_RE.match(account_id) or ACCOUNT_ID_32B_RE.match(account_id)):
+        return "Invalid ACCOUNT_ID. It must be 0x + 40 hex (address) or 0x + 64 hex (account id)."
     if not ORDERLY_KEY_RE.match(orderly_key):
         return "Invalid ORDERLY_KEY. It must start with ed25519: and be base64."
     if not ORDERLY_KEY_RE.match(orderly_secret):
