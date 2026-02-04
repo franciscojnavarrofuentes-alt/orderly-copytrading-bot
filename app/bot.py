@@ -796,7 +796,7 @@ async def copy_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     if action == "custom":
-        await query.edit_message_text(
+        await query.message.reply_text(
             "Envía en este chat:\n"
             "/copyusd <USD>\n"
             "Ejemplo:\n"
