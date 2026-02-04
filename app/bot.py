@@ -798,10 +798,11 @@ async def copy_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     if action == "custom":
         await query.edit_message_text(
             "Envía en este chat:\n"
-            f"/copyusd {signal_id} <USD>\n"
+            "/copyusd <USD>\n"
             "Ejemplo:\n"
-            f"/copyusd {signal_id} 50"
+            "/copyusd 50"
         )
+        context.user_data["pending_signal_id"] = signal_id
         return
 
     if action == "percent":
@@ -895,14 +896,23 @@ async def copy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text("Use /copyusd in a private chat with me.")
         return
 
-    if len(context.args) < 2:
+    if len(context.args) < 1:
         await update.message.reply_text(
-            "Usage: /copyusd <SIGNAL_ID> <USD>"
+            "Usage: /copyusd <USD>"
         )
         return
 
-    signal_id = context.args[0]
-    usd_value = context.args[1]
+    if len(context.args) == 1:
+        signal_id = context.user_data.get("pending_signal_id")
+        usd_value = context.args[0]
+        if not signal_id:
+            await update.message.reply_text(
+                "Please click 'Custom USD' first so I know which signal to use."
+            )
+            return
+    else:
+        signal_id = context.args[0]
+        usd_value = context.args[1]
 
     signals = context.bot_data.get("signals", {})
     signal = signals.get(signal_id)
