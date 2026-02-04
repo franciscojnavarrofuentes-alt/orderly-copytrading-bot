@@ -94,9 +94,16 @@ def _signal_to_message(signal: dict[str, float | str | None]) -> str:
     limit_line = ""
     if signal["order_type"] == "LIMIT" and signal["limit_price"] is not None:
         limit_line = f"<b>LIMIT:</b> ${signal['limit_price']}\n"
+    price_line = ""
+    if signal["order_type"] == "MARKET" and signal.get("market_price") is not None:
+        price_line = f"<b>Price:</b> ${signal['market_price']}\n"
+    title = f"{ticker} {side}"
+    if signal["order_type"] == "MARKET":
+        title = f"{ticker} - Market {side}"
     return (
-        f"{side_icon} <b>{ticker} {side}</b> {side_icon}\n\n"
+        f"{side_icon} <b>{title}</b> {side_icon}\n\n"
         f"{limit_line}"
+        f"{price_line}"
         f"<b>Size:</b> ${signal['notional_usd']}\n"
         f"<b>TP:</b> ${signal['take_profit']} | <b>SL:</b> ${signal['stop_loss']}\n\n"
         "<i>Press 'Copy' to proceed (TP/SL included).</i>"
@@ -174,6 +181,16 @@ async def _publish_signal(
     context: ContextTypes.DEFAULT_TYPE,
     signal: dict[str, float | str | None],
 ) -> None:
+    if signal.get("order_type") == "MARKET" and signal.get("market_price") is None:
+        client: OrderlyClient = context.bot_data["orderly_client"]
+        try:
+            market_price = await asyncio.to_thread(
+                client.get_mark_price, str(signal["symbol"])
+            )
+            signal["market_price"] = market_price
+        except Exception:
+            signal["market_price"] = None
+
     signal_id = _store_signal(context, signal)
     bot_username = context.bot_data["bot_username"]
     link = f"https://t.me/{bot_username}?start=copy_{signal_id}"
@@ -228,10 +245,17 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         limit_line = ""
         if signal["order_type"] == "LIMIT" and signal.get("limit_price") is not None:
             limit_line = f"<b>LIMIT:</b> ${signal['limit_price']}\n"
+        price_line = ""
+        if signal["order_type"] == "MARKET" and signal.get("market_price") is not None:
+            price_line = f"<b>Price:</b> ${signal['market_price']}\n"
+        title = f"{ticker} {side}"
+        if signal["order_type"] == "MARKET":
+            title = f"{ticker} - Market {side}"
         text = (
             "Signal received:\n"
-            f"{side_icon} <b>{ticker} {side}</b> {side_icon}\n\n"
+            f"{side_icon} <b>{title}</b> {side_icon}\n\n"
             f"{limit_line}"
+            f"{price_line}"
             f"<b>Size:</b> ${signal['notional_usd']}\n"
             f"<b>TP:</b> ${signal['take_profit']} | <b>SL:</b> ${signal['stop_loss']}\n\n"
             "<i>Press 'Copy' to proceed (TP/SL included).</i>"
