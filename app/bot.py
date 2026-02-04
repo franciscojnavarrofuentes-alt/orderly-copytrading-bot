@@ -188,8 +188,13 @@ async def _publish_signal(
                 client.get_mark_price, str(signal["symbol"])
             )
             signal["market_price"] = market_price
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
             signal["market_price"] = None
+            await update.message.reply_text(
+                f"Could not fetch mark price for {signal['symbol']}: {exc}. "
+                "Signal was not sent."
+            )
+            return
 
     signal_id = _store_signal(context, signal)
     bot_username = context.bot_data["bot_username"]
