@@ -7,6 +7,10 @@ Telegram bot to copy signals on Orderly. Only group admins can publish signals; 
 - Telegram bot token
 - Orderly credentials per user
 
+## Project hygiene
+- `.env` is ignored by Git and should never be committed.
+- Use `/signalform` for the simplest signal creation UX.
+
 ## Configuration
 1. Create `.env` in the project root:
 ```env
@@ -45,6 +49,17 @@ python -m app
 or
 ```
 /signal PERP_ETH_USDC BUY LIMIT 200 2200 1950 2050
+```
+Or use the multiline template:
+```
+/signalform
+SYMBOL=PERP_ETH_USDC
+SIDE=BUY
+TYPE=LIMIT
+USD=200
+TP=2200
+SL=1950
+LIMIT=2050
 ```
 3. Each user registers their keys in private:
 ```
