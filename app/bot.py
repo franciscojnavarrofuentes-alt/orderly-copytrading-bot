@@ -6,6 +6,7 @@ from typing import Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType
+from telegram.error import BadRequest, Forbidden
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -183,6 +184,19 @@ async def _publish_signal(
         reply_markup=keyboard,
         parse_mode="HTML",
     )
+
+
+async def _try_delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None:
+        return
+    try:
+        await context.bot.delete_message(
+            chat_id=update.message.chat_id,
+            message_id=update.message.message_id,
+        )
+    except (Forbidden, BadRequest):
+        # Lacking permissions or message already gone.
+        return
 
 
 async def _is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -389,6 +403,7 @@ async def signalform_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     await _publish_signal(update, context, signal)
+    await _try_delete_message(update, context)
 
 
 def _get_wizard_key(update: Update) -> tuple[int, int]:
