@@ -181,18 +181,39 @@ async def _publish_signal(
     context: ContextTypes.DEFAULT_TYPE,
     signal: dict[str, float | str | None],
 ) -> None:
-    if signal.get("order_type") == "MARKET" and signal.get("market_price") is None:
-        client: OrderlyClient = context.bot_data["orderly_client"]
-        try:
-            market_price = await asyncio.to_thread(
-                client.get_mark_price, str(signal["symbol"])
-            )
-            signal["market_price"] = market_price
-        except Exception as exc:  # noqa: BLE001
-            signal["market_price"] = None
+    price_ref = None
+    if signal.get("order_type") == "MARKET":
+        if signal.get("market_price") is None:
+            client: OrderlyClient = context.bot_data["orderly_client"]
+            try:
+                market_price = await asyncio.to_thread(
+                    client.get_mark_price, str(signal["symbol"])
+                )
+                signal["market_price"] = market_price
+            except Exception as exc:  # noqa: BLE001
+                signal["market_price"] = None
+                await update.message.reply_text(
+                    f"Could not fetch mark price for {signal['symbol']}: {exc}. "
+                    "Signal was not sent."
+                )
+                return
+        price_ref = float(signal["market_price"])
+    else:
+        price_ref = float(signal["limit_price"])
+
+    side = str(signal["side"]).upper()
+    tp = float(signal["take_profit"])
+    sl = float(signal["stop_loss"])
+    if side == "BUY":
+        if not (tp > price_ref and sl < price_ref):
             await update.message.reply_text(
-                f"Could not fetch mark price for {signal['symbol']}: {exc}. "
-                "Signal was not sent."
+                "Invalid TP/SL for BUY. TP must be above price and SL below price."
+            )
+            return
+    elif side == "SELL":
+        if not (tp < price_ref and sl > price_ref):
+            await update.message.reply_text(
+                "Invalid TP/SL for SELL. TP must be below price and SL above price."
             )
             return
 
