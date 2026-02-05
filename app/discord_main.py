@@ -12,7 +12,11 @@ def main() -> None:
     storage.init_db()
 
     orderly_client = OrderlyClient(settings.orderly_base_url)
-    bot = OrderlyDiscordBot(storage=storage, orderly_client=orderly_client)
+    bot = OrderlyDiscordBot(
+        storage=storage,
+        orderly_client=orderly_client,
+        dev_guild_id=settings.dev_guild_id,
+    )
     register_discord_commands(bot)
 
     logging.getLogger(__name__).info("Starting Discord bot")

@@ -66,6 +66,7 @@ class DiscordSettings:
     orderly_base_url: str
     database_path: str
     master_key: str
+    dev_guild_id: int | None
 
 
 def load_discord_settings() -> DiscordSettings:
@@ -75,6 +76,7 @@ def load_discord_settings() -> DiscordSettings:
     discord_token = os.getenv("DISCORD_BOT_TOKEN")
     if not discord_token:
         raise RuntimeError("Missing DISCORD_BOT_TOKEN in environment.")
+    dev_guild_id = os.getenv("DISCORD_DEV_GUILD_ID")
 
     master_key = os.getenv("MASTER_KEY")
     if not master_key:
@@ -90,4 +92,5 @@ def load_discord_settings() -> DiscordSettings:
         orderly_base_url=orderly_base_url,
         database_path=database_path,
         master_key=master_key,
+        dev_guild_id=int(dev_guild_id) if dev_guild_id else None,
     )

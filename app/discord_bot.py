@@ -199,16 +199,27 @@ class CopyButtonView(discord.ui.View):
 
 
 class OrderlyDiscordBot(discord.Client):
-    def __init__(self, storage: Storage, orderly_client: OrderlyClient) -> None:
+    def __init__(
+        self,
+        storage: Storage,
+        orderly_client: OrderlyClient,
+        dev_guild_id: int | None = None,
+    ) -> None:
         intents = discord.Intents.default()
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
         self.storage = storage
         self.orderly_client = orderly_client
         self.signals: dict[str, dict] = {}
+        self.dev_guild_id = dev_guild_id
 
     async def setup_hook(self) -> None:
-        await self.tree.sync()
+        if self.dev_guild_id:
+            guild = discord.Object(id=self.dev_guild_id)
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+        else:
+            await self.tree.sync()
 
     async def on_ready(self) -> None:
         logger.info("Discord bot logged in as %s", self.user)
