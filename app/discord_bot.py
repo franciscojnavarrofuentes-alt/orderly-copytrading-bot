@@ -225,6 +225,7 @@ class OrderlyDiscordBot(discord.Client):
     async def setup_hook(self) -> None:
         if self.dev_guild_id:
             guild = discord.Object(id=self.dev_guild_id)
+            self.tree.clear_commands(guild=guild)
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
         else:
