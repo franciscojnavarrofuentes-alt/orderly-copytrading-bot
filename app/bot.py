@@ -55,10 +55,10 @@ def _validate_register_args(account_id: str, orderly_key: str, orderly_secret: s
 def _parse_signal_args(args: list[str]) -> dict[str, float | str | None]:
     if len(args) < 6:
         raise ValueError(
-            "Format: /signal <SYMBOL> <SIDE> <TYPE> <NOTIONAL_USD> <TP> <SL> [LIMIT_PRICE]"
+            "Format: /signal <TICKER> <SIDE> <TYPE> <NOTIONAL_USD> <TP> <SL> [LIMIT_PRICE]"
         )
 
-    symbol = args[0].upper()
+    symbol = _normalize_symbol(args[0])
     side = args[1].upper()
     order_type = args[2].upper()
     notional_usd = float(args[3])
@@ -116,7 +116,7 @@ def _signalform_template() -> str:
     return (
         "Signalform template (multiline):\n"
         "/signalform\n"
-        "SYMBOL=PERP_ETH_USDC\n"
+        "SYMBOL=ETH\n"
         "SIDE=BUY\n"
         "TYPE=MARKET\n"
         "USD=200\n"
@@ -155,7 +155,7 @@ def _parse_signalform(text: str) -> dict[str, float | str | None]:
         raise ValueError("If TYPE=MARKET, LIMIT must be empty or omitted.\n" + _signalform_template())
 
     return {
-        "symbol": symbol.upper(),
+        "symbol": _normalize_symbol(symbol),
         "side": side.upper(),
         "order_type": order_type.upper(),
         "notional_usd": float(usd),
@@ -163,6 +163,15 @@ def _parse_signalform(text: str) -> dict[str, float | str | None]:
         "stop_loss": float(sl),
         "limit_price": float(limit) if limit else None,
     }
+
+
+def _normalize_symbol(symbol: str) -> str:
+    cleaned = symbol.strip().upper()
+    if not cleaned:
+        return cleaned
+    if cleaned.startswith("PERP_") or "_" in cleaned:
+        return cleaned
+    return f"PERP_{cleaned}_USDC"
 
 
 def _extract_ticker(symbol: str) -> str:
@@ -393,7 +402,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/register <ACCOUNT_ID> <ORDERLY_KEY> <ORDERLY_SECRET> (solo en privado)\n"
         "/follow - copy signals in the group\n"
         "/unfollow - stop copying signals\n"
-        "/signal <SYMBOL> <SIDE> <TYPE> <NOTIONAL_USD> <TP> <SL> [LIMIT_PRICE] (solo admins)\n"
+        "/signal <TICKER> <SIDE> <TYPE> <NOTIONAL_USD> <TP> <SL> [LIMIT_PRICE] (solo admins)\n"
         "/signalform (plantilla multilinea, solo admins)\n"
         "/signalwizard - guided signal (admins only)\n"
         "/cancel - cancelar flujo guiado\n"

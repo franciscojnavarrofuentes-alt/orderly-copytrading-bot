@@ -22,6 +22,15 @@ def _extract_ticker(symbol: str) -> str:
     return cleaned.split("_", 1)[0]
 
 
+def _normalize_symbol(symbol: str) -> str:
+    cleaned = symbol.strip().upper()
+    if not cleaned:
+        return cleaned
+    if cleaned.startswith("PERP_") or "_" in cleaned:
+        return cleaned
+    return f"PERP_{cleaned}_USDC"
+
+
 def _format_signal_message(signal: dict) -> str:
     ticker = _extract_ticker(str(signal["symbol"]))
     side = str(signal["side"]).upper()
@@ -510,7 +519,7 @@ def register_discord_commands(bot: OrderlyDiscordBot) -> None:
             "/signalform - create a signal (admins only)\n"
             "/ping - check bot status\n\n"
             "Signalform fields:\n"
-            "Symbol, Side, Type, Size (USD), TP, SL, Limit (only if Type=LIMIT)"
+            "Symbol (ticker only), Side, Type, Size (USD), TP, SL, Limit (only if Type=LIMIT)"
         )
         await interaction.response.send_message(message, ephemeral=True)
 
@@ -544,7 +553,7 @@ def register_discord_commands(bot: OrderlyDiscordBot) -> None:
 
     @bot.tree.command(name="signalform", description="Create a signal with structured fields")
     @app_commands.describe(
-        symbol="Example: PERP_ETH_USDC",
+        symbol="Ticker only, e.g. ETH",
         side="BUY or SELL",
         order_type="LIMIT or MARKET",
         size="Position size in USD",
@@ -587,7 +596,7 @@ def register_discord_commands(bot: OrderlyDiscordBot) -> None:
             return
 
         signal = {
-            "symbol": symbol.strip(),
+            "symbol": _normalize_symbol(symbol),
             "side": side.value.upper(),
             "order_type": order_type.value.upper(),
             "notional_usd": float(size),
