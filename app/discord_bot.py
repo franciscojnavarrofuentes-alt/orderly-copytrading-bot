@@ -1,11 +1,14 @@
 import asyncio
+import io
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 import discord
 from discord import app_commands
 
+from app.chart import SignalLevels, render_candlestick_chart, render_signal_chart
 from app.orderly import OrderlyClient, OrderlyOrder
 from app.storage import Storage
 
@@ -28,17 +31,16 @@ def _format_signal_message(signal: dict) -> str:
         title = f"{ticker} - Market {side}"
 
     limit_line = ""
+    mark_line = ""
     if signal["order_type"] == "LIMIT" and signal.get("limit_price") is not None:
         limit_line = f"**LIMIT:** ${signal['limit_price']}\n"
-
-    price_line = ""
-    if signal["order_type"] == "MARKET" and signal.get("market_price") is not None:
-        price_line = f"**Price:** ${signal['market_price']}\n"
+        if signal.get("market_price") is not None:
+            mark_line = f"**Mark:** ${signal['market_price']}\n"
 
     return (
         f"{side_icon} **{title}** {side_icon}\n\n"
         f"{limit_line}"
-        f"{price_line}"
+        f"{mark_line}"
         f"**Size:** ${signal['notional_usd']}\n"
         f"**TP:** ${signal['take_profit']} | **SL:** ${signal['stop_loss']}\n\n"
         "*Press 'Copy' to proceed (TP/SL included).*"
@@ -46,15 +48,18 @@ def _format_signal_message(signal: dict) -> str:
 
 
 def _parse_signalform(text: str) -> dict:
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if not lines:
+    raw = text.strip()
+    if not raw:
         raise ValueError("Empty template.")
 
     data: dict[str, str] = {}
-    for line in lines:
-        if "=" not in line:
-            raise ValueError("Invalid line. Use KEY=VALUE.")
-        key, value = line.split("=", 1)
+    parts = [p for p in raw.replace("\n", " ").replace(",", " ").split(" ") if p.strip()]
+    for part in parts:
+        if "=" not in part:
+            raise ValueError(
+                "Invalid format. Use KEY=VALUE separated by spaces."
+            )
+        key, value = part.split("=", 1)
         data[key.strip().upper()] = value.strip()
 
     symbol = data.get("SYMBOL")
@@ -85,23 +90,65 @@ def _parse_signalform(text: str) -> dict:
 
 
 class CopyAmountModal(discord.ui.Modal):
-    def __init__(self, bot: "OrderlyDiscordBot", signal_id: str) -> None:
-        super().__init__(title="Custom USD Amount")
+    def __init__(self, bot: "OrderlyDiscordBot", signal_id: str, signal: dict) -> None:
+        super().__init__(title="Custom Order")
         self.bot = bot
         self.signal_id = signal_id
-        self.usd = discord.ui.TextInput(label="USD amount", placeholder="e.g. 100")
+        self.signal = signal
+        self.usd = discord.ui.TextInput(
+            label="USD size",
+            placeholder="e.g. 100",
+            default=str(signal.get("notional_usd", "")),
+        )
+        self.limit = discord.ui.TextInput(
+            label="Limit price (optional)",
+            placeholder="e.g. 2050",
+            required=False,
+            default=str(signal.get("limit_price") or ""),
+        )
+        self.tp = discord.ui.TextInput(
+            label="Take Profit",
+            placeholder="e.g. 2200",
+            default=str(signal.get("take_profit", "")),
+        )
+        self.sl = discord.ui.TextInput(
+            label="Stop Loss",
+            placeholder="e.g. 1950",
+            default=str(signal.get("stop_loss", "")),
+        )
         self.add_item(self.usd)
+        self.add_item(self.limit)
+        self.add_item(self.tp)
+        self.add_item(self.sl)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
             usd = float(str(self.usd.value))
+            tp = float(str(self.tp.value))
+            sl = float(str(self.sl.value))
         except ValueError:
             await interaction.response.send_message(
-                "Invalid USD amount.", ephemeral=True
+                "Invalid number in one of the fields.", ephemeral=True
             )
             return
+        limit_val = None
+        if str(self.limit.value).strip():
+            try:
+                limit_val = float(str(self.limit.value))
+            except ValueError:
+                await interaction.response.send_message(
+                    "Invalid limit price.", ephemeral=True
+                )
+                return
 
-        await self.bot.copy_with_usd(interaction, self.signal_id, usd)
+        await self.bot.copy_with_custom(
+            interaction,
+            self.signal_id,
+            usd,
+            limit_val=limit_val,
+            tp=tp,
+            sl=sl,
+        )
 
 
 class CopyOptionsView(discord.ui.View):
@@ -126,9 +173,17 @@ class CopyOptionsView(discord.ui.View):
     async def copy_75(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self.bot.copy_percent(interaction, self.signal_id, 75)
 
-    @discord.ui.button(label="Custom USD", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="Custom", style=discord.ButtonStyle.success)
     async def copy_custom(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await interaction.response.send_modal(CopyAmountModal(self.bot, self.signal_id))
+        signal = self.bot.signals.get(self.signal_id)
+        if not signal:
+            await interaction.response.send_message(
+                "Signal not found or expired.", ephemeral=True
+            )
+            return
+        await interaction.response.send_modal(
+            CopyAmountModal(self.bot, self.signal_id, signal)
+        )
 
 
 class CopyButtonView(discord.ui.View):
@@ -140,6 +195,7 @@ class CopyButtonView(discord.ui.View):
     @discord.ui.button(label="Copy", style=discord.ButtonStyle.primary)
     async def copy_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await self.bot.send_copy_options(interaction, self.signal_id)
+
 
 
 class OrderlyDiscordBot(discord.Client):
@@ -157,6 +213,17 @@ class OrderlyDiscordBot(discord.Client):
     async def on_ready(self) -> None:
         logger.info("Discord bot logged in as %s", self.user)
 
+    def user_can_signal(self, interaction: discord.Interaction) -> bool:
+        if interaction.guild is None:
+            return False
+        if interaction.user.guild_permissions.administrator:
+            return True
+        allowed_roles = self.storage.get_allowed_role_ids(interaction.guild.id)
+        if not allowed_roles:
+            return False
+        user_role_ids = {role.id for role in interaction.user.roles}
+        return any(role_id in user_role_ids for role_id in allowed_roles)
+
     async def send_copy_options(self, interaction: discord.Interaction, signal_id: str) -> None:
         signal = self.signals.get(signal_id)
         if not signal:
@@ -166,27 +233,27 @@ class OrderlyDiscordBot(discord.Client):
             return
 
         if not self.storage.get_user(interaction.user.id):
-            await interaction.response.send_message(
-                "Please register first with /register in DM.",
-                ephemeral=True,
-            )
-            return
+            try:
+                await interaction.user.send(
+                    "Please register first with /register in DM."
+                )
+            except discord.Forbidden:
+                await interaction.response.send_message(
+                    "Please register first with /register in DM.",
+                    ephemeral=True,
+                )
+                return
 
-        try:
-            await interaction.user.send(
-                _format_signal_message(signal),
-                view=CopyOptionsView(self, signal_id),
-            )
-        except discord.Forbidden:
             await interaction.response.send_message(
-                "I cannot send you DMs. Please enable DMs and try again.",
+                "I sent you a DM with the registration step.",
                 ephemeral=True,
             )
             return
 
         await interaction.response.send_message(
-            "Check your DMs to copy this signal.",
+            _format_signal_message(signal),
             ephemeral=True,
+            view=CopyOptionsView(self, signal_id),
         )
 
     async def copy_percent(self, interaction: discord.Interaction, signal_id: str, percent: float) -> None:
@@ -371,6 +438,57 @@ class OrderlyDiscordBot(discord.Client):
         )
         await interaction.response.send_message(confirmation, ephemeral=True)
 
+    async def copy_with_custom(
+        self,
+        interaction: discord.Interaction,
+        signal_id: str,
+        usd: float,
+        limit_val: Optional[float],
+        tp: float,
+        sl: float,
+    ) -> None:
+        signal = self.signals.get(signal_id)
+        if not signal:
+            await interaction.response.send_message(
+                "Signal not found or expired.", ephemeral=True
+            )
+            return
+
+        updated = dict(signal)
+        updated["take_profit"] = tp
+        updated["stop_loss"] = sl
+        if updated["order_type"] == "LIMIT" and limit_val is not None:
+            updated["limit_price"] = limit_val
+
+        price_ref = (
+            float(updated["limit_price"])
+            if updated["order_type"] == "LIMIT"
+            else float(updated.get("market_price") or 0)
+        )
+        if updated["order_type"] == "MARKET" and price_ref <= 0:
+            price_ref = await asyncio.to_thread(
+                self.orderly_client.get_mark_price, updated["symbol"]
+            )
+
+        side = str(updated["side"]).upper()
+        if side == "BUY":
+            if not (tp > price_ref and sl < price_ref):
+                await interaction.response.send_message(
+                    "Invalid TP/SL for BUY. TP must be above price and SL below price.",
+                    ephemeral=True,
+                )
+                return
+        elif side == "SELL":
+            if not (tp < price_ref and sl > price_ref):
+                await interaction.response.send_message(
+                    "Invalid TP/SL for SELL. TP must be below price and SL above price.",
+                    ephemeral=True,
+                )
+                return
+
+        self.signals[signal_id] = updated
+        await self.copy_with_usd(interaction, signal_id, usd)
+
 
 def register_discord_commands(bot: OrderlyDiscordBot) -> None:
     @bot.tree.command(name="help", description="Show available commands")
@@ -428,9 +546,9 @@ def register_discord_commands(bot: OrderlyDiscordBot) -> None:
             )
             return
 
-        if not interaction.user.guild_permissions.administrator:
+        if not bot.user_can_signal(interaction):
             await interaction.response.send_message(
-                "Only server admins can create signals.",
+                "Only server admins or allowed roles can create signals.",
                 ephemeral=True,
             )
             return
@@ -456,6 +574,12 @@ def register_discord_commands(bot: OrderlyDiscordBot) -> None:
                 return
         else:
             price_ref = float(signal["limit_price"])
+            try:
+                signal["market_price"] = await asyncio.to_thread(
+                    bot.orderly_client.get_mark_price, signal["symbol"]
+                )
+            except Exception:  # noqa: BLE001
+                signal["market_price"] = None
 
         tp = float(signal["take_profit"])
         sl = float(signal["stop_loss"])
@@ -477,11 +601,125 @@ def register_discord_commands(bot: OrderlyDiscordBot) -> None:
 
         signal_id = str(uuid.uuid4())[:8]
         bot.signals[signal_id] = signal
+
+        title = f"{_extract_ticker(str(signal['symbol']))} {signal['side']}"
+        levels = SignalLevels(
+            entry=price_ref,
+            take_profit=float(signal["take_profit"]),
+            stop_loss=float(signal["stop_loss"]),
+            current=signal.get("market_price") if signal["order_type"] == "LIMIT" else None,
+        )
+        chart_bytes = None
+        try:
+            rows = await asyncio.to_thread(
+                bot.orderly_client.get_tv_history,
+                str(signal["symbol"]),
+                "1h",
+                100,
+                int(datetime.now(tz=timezone.utc).timestamp()),
+            )
+            candles = [
+                {
+                    "open": float(r["open"]),
+                    "high": float(r["high"]),
+                    "low": float(r["low"]),
+                    "close": float(r["close"]),
+                }
+                for r in rows
+            ]
+            timestamps = [int(r.get("ts")) for r in rows]
+            chart_bytes = await asyncio.to_thread(
+                render_candlestick_chart, candles, levels, title, timestamps
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Discord candlestick render failed: %s", exc)
+            chart_bytes = None
+
+        if chart_bytes is None:
+            chart_bytes = await asyncio.to_thread(
+                render_signal_chart, levels, title
+            )
+
+        file = discord.File(fp=io.BytesIO(chart_bytes), filename="signal.png")
         await interaction.response.send_message(
             _format_signal_message(signal),
             view=CopyButtonView(bot, signal_id),
+            file=file,
         )
-        try:
-            await interaction.delete_original_response()
-        except discord.NotFound:
-            pass
+
+    @bot.tree.command(name="signalrole_add", description="Allow a role to publish signals (admins only)")
+    async def signalrole_add(interaction: discord.Interaction, role: discord.Role) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Use this command inside a server.",
+                ephemeral=True,
+            )
+            return
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "Only server admins can manage signal roles.",
+                ephemeral=True,
+            )
+            return
+        allowed = bot.storage.get_allowed_role_ids(interaction.guild.id)
+        if role.id not in allowed:
+            allowed.append(role.id)
+            bot.storage.set_allowed_role_ids(interaction.guild.id, allowed)
+        await interaction.response.send_message(
+            f"Role allowed to publish signals: {role.name}",
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="signalrole_remove", description="Remove a role from signal publishers (admins only)")
+    async def signalrole_remove(interaction: discord.Interaction, role: discord.Role) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Use this command inside a server.",
+                ephemeral=True,
+            )
+            return
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "Only server admins can manage signal roles.",
+                ephemeral=True,
+            )
+            return
+        allowed = bot.storage.get_allowed_role_ids(interaction.guild.id)
+        if role.id in allowed:
+            allowed = [rid for rid in allowed if rid != role.id]
+            bot.storage.set_allowed_role_ids(interaction.guild.id, allowed)
+        await interaction.response.send_message(
+            f"Role removed from signal publishers: {role.name}",
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="signalrole_list", description="List roles that can publish signals (admins only)")
+    async def signalrole_list(interaction: discord.Interaction) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Use this command inside a server.",
+                ephemeral=True,
+            )
+            return
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "Only server admins can manage signal roles.",
+                ephemeral=True,
+            )
+            return
+        allowed = bot.storage.get_allowed_role_ids(interaction.guild.id)
+        if not allowed:
+            await interaction.response.send_message(
+                "No additional roles configured.",
+                ephemeral=True,
+            )
+            return
+        role_names = []
+        for role_id in allowed:
+            role = interaction.guild.get_role(role_id)
+            if role:
+                role_names.append(role.name)
+        await interaction.response.send_message(
+            "Allowed roles: " + ", ".join(role_names) if role_names else "No valid roles found.",
+            ephemeral=True,
+        )

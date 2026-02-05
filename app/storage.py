@@ -56,6 +56,14 @@ class Storage:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS guild_settings (
+                    guild_id INTEGER PRIMARY KEY,
+                    allowed_role_ids TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
 
         logger.info("SQLite initialized at %s", self._db_path)
 
@@ -147,3 +155,26 @@ class Storage:
             )
             for row in rows
         ]
+
+    def get_allowed_role_ids(self, guild_id: int) -> list[int]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT allowed_role_ids FROM guild_settings WHERE guild_id = ?",
+                (guild_id,),
+            ).fetchone()
+        if not row or not row[0]:
+            return []
+        return [int(x) for x in row[0].split(",") if x.strip().isdigit()]
+
+    def set_allowed_role_ids(self, guild_id: int, role_ids: list[int]) -> None:
+        allowed = ",".join(str(rid) for rid in role_ids)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO guild_settings (guild_id, allowed_role_ids)
+                VALUES (?, ?)
+                ON CONFLICT(guild_id) DO UPDATE SET
+                    allowed_role_ids = excluded.allowed_role_ids
+                """,
+                (guild_id, allowed),
+            )
