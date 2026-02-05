@@ -498,14 +498,8 @@ def register_discord_commands(bot: OrderlyDiscordBot) -> None:
             "/register (DM only) - save your Orderly keys\n"
             "/signalform - create a signal (admins only)\n"
             "/ping - check bot status\n\n"
-            "Signalform template:\n"
-            "SYMBOL=PERP_ETH_USDC\n"
-            "SIDE=BUY\n"
-            "TYPE=MARKET\n"
-            "USD=400\n"
-            "TP=2200\n"
-            "SL=1950\n"
-            "LIMIT=2050  (only if TYPE=LIMIT)"
+            "Signalform fields:\n"
+            "Symbol, Side, Type, Size (USD), TP, SL, Limit (only if Type=LIMIT)"
         )
         await interaction.response.send_message(message, ephemeral=True)
 
@@ -537,8 +531,36 @@ def register_discord_commands(bot: OrderlyDiscordBot) -> None:
             "Keys saved. You can now copy signals in the server."
         )
 
-    @bot.tree.command(name="signalform", description="Create a signal using the multiline template")
-    async def signalform(interaction: discord.Interaction, template: str) -> None:
+    @bot.tree.command(name="signalform", description="Create a signal with structured fields")
+    @app_commands.describe(
+        symbol="Example: PERP_ETH_USDC",
+        side="BUY or SELL",
+        order_type="LIMIT or MARKET",
+        size="Position size in USD",
+        tp="Take profit price",
+        sl="Stop loss price",
+        limit="Limit price (only if Type=LIMIT)",
+    )
+    @app_commands.choices(
+        side=[
+            app_commands.Choice(name="BUY", value="BUY"),
+            app_commands.Choice(name="SELL", value="SELL"),
+        ],
+        order_type=[
+            app_commands.Choice(name="LIMIT", value="LIMIT"),
+            app_commands.Choice(name="MARKET", value="MARKET"),
+        ],
+    )
+    async def signalform(
+        interaction: discord.Interaction,
+        symbol: str,
+        side: app_commands.Choice[str],
+        order_type: app_commands.Choice[str],
+        size: float,
+        tp: float,
+        sl: float,
+        limit: Optional[float] = None,
+    ) -> None:
         if interaction.guild is None:
             await interaction.response.send_message(
                 "Use /signalform inside a server.",
@@ -553,10 +575,27 @@ def register_discord_commands(bot: OrderlyDiscordBot) -> None:
             )
             return
 
-        try:
-            signal = _parse_signalform(template)
-        except ValueError as exc:
-            await interaction.response.send_message(str(exc), ephemeral=True)
+        signal = {
+            "symbol": symbol.strip(),
+            "side": side.value.upper(),
+            "order_type": order_type.value.upper(),
+            "notional_usd": float(size),
+            "take_profit": float(tp),
+            "stop_loss": float(sl),
+            "limit_price": float(limit) if limit is not None else None,
+        }
+
+        if signal["order_type"] == "LIMIT" and signal["limit_price"] is None:
+            await interaction.response.send_message(
+                "LIMIT price is required when Type=LIMIT.",
+                ephemeral=True,
+            )
+            return
+        if signal["order_type"] == "MARKET" and signal["limit_price"] is not None:
+            await interaction.response.send_message(
+                "Do not provide LIMIT when Type=MARKET.",
+                ephemeral=True,
+            )
             return
 
         price_ref: Optional[float] = None
