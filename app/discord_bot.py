@@ -518,6 +518,7 @@ def register_discord_commands(bot: OrderlyDiscordBot) -> None:
             "Commands:\n"
             "/register (DM only) - save your Orderly keys\n"
             "/signalform - create a signal (admins only)\n"
+            "/sync - refresh bot commands for this server (admins only)\n"
             "/ping - check bot status\n\n"
             "Signalform fields:\n"
             "Symbol (ticker only), Side, Type, Size (USD), TP, SL, Limit (only if Type=LIMIT)"
@@ -527,6 +528,27 @@ def register_discord_commands(bot: OrderlyDiscordBot) -> None:
     @bot.tree.command(name="ping", description="Check if the bot is alive")
     async def ping(interaction: discord.Interaction) -> None:
         await interaction.response.send_message("pong", ephemeral=True)
+
+    @bot.tree.command(name="sync", description="Sync bot commands to this server (admins only)")
+    async def sync_commands(interaction: discord.Interaction) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Use this command inside a server.",
+                ephemeral=True,
+            )
+            return
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "Only server admins can sync commands.",
+                ephemeral=True,
+            )
+            return
+        bot.tree.copy_global_to(guild=interaction.guild)
+        await bot.tree.sync(guild=interaction.guild)
+        await interaction.response.send_message(
+            "Commands synced for this server.",
+            ephemeral=True,
+        )
 
     @bot.tree.command(name="register", description="Register your Orderly credentials (DM only)")
     async def register(
