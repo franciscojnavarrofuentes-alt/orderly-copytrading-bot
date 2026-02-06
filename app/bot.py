@@ -936,6 +936,19 @@ async def _copy_with_usd(
             if mark_price < price_ref * 0.2 or mark_price > price_ref * 5:
                 mark_price = None
         if mark_price is not None:
+            if price_ref < mark_price * 0.2 or price_ref > mark_price * 5:
+                price_tick = float(
+                    rules.get("price_tick")
+                    or rules.get("quote_tick")
+                    or 0
+                )
+                adjusted = mark_price
+                if price_tick > 0:
+                    adjusted = client.round_price(adjusted, price_tick, str(signal["side"]))
+                limit_price = adjusted
+                price_ref = adjusted
+                adjusted = True
+                adjusted_price = float(adjusted)
             side = str(signal["side"]).upper()
             crosses = (
                 side == "BUY" and price_ref > mark_price
