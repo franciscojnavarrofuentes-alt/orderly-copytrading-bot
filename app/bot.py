@@ -183,7 +183,10 @@ def _extract_ticker(symbol: str) -> str:
 
 def _store_signal(context: ContextTypes.DEFAULT_TYPE, signal: dict[str, float | str | None]) -> str:
     signal_id = str(uuid.uuid4())[:8]
-    context.bot_data.setdefault("signals", {})[signal_id] = signal
+    stored = dict(signal)
+    if stored.get("limit_price") is not None and stored.get("original_limit_price") is None:
+        stored["original_limit_price"] = stored["limit_price"]
+    context.bot_data.setdefault("signals", {})[signal_id] = stored
     return signal_id
 
 
@@ -913,7 +916,7 @@ async def _copy_with_usd(
 
     adjusted = False
     adjusted_price: float | None = None
-    limit_price = signal.get("limit_price")
+    limit_price = signal.get("original_limit_price", signal.get("limit_price"))
     if signal["order_type"] == "LIMIT":
         price_ref = float(limit_price)
         mark_price = signal.get("market_price")
