@@ -1027,9 +1027,10 @@ async def _copy_with_usd(
             "confirmation": confirmation,
         }
         message = update.effective_message
+        display_price = limit_price if limit_price is not None else adjusted_price
         adjusted_text = (
             "Heads up: LIMIT price crosses the mark price. "
-            f"I adjusted it to ${adjusted_price} to avoid rejection.\n"
+            f"I adjusted it to ${display_price} to avoid rejection.\n"
             "Do you want to place the order?"
         )
         if message is not None:
