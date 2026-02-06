@@ -906,12 +906,14 @@ async def _copy_with_usd(
     adjusted_price: float | None = None
     if signal["order_type"] == "LIMIT":
         price_ref = float(signal["limit_price"])
-        try:
-            mark_price = await asyncio.to_thread(
-                client.get_mark_price, signal["symbol"]
-            )
-        except Exception:  # noqa: BLE001
-            mark_price = None
+        mark_price = signal.get("market_price")
+        if mark_price is None:
+            try:
+                mark_price = await asyncio.to_thread(
+                    client.get_mark_price, signal["symbol"]
+                )
+            except Exception:  # noqa: BLE001
+                mark_price = None
         if mark_price is not None:
             side = str(signal["side"]).upper()
             crosses = (
