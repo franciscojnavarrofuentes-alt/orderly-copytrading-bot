@@ -6,10 +6,23 @@ from dotenv import load_dotenv
 
 
 def _configure_logging() -> None:
-    logging.basicConfig(
-        level=os.getenv("LOG_LEVEL", "INFO"),
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-    )
+    level = os.getenv("LOG_LEVEL", "INFO")
+    fmt = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    log_file = os.getenv("LOG_FILE")
+    if log_file:
+        from logging.handlers import RotatingFileHandler
+
+        max_bytes = int(os.getenv("LOG_MAX_BYTES", "5242880"))
+        backup_count = int(os.getenv("LOG_BACKUP_COUNT", "3"))
+        handlers.append(
+            RotatingFileHandler(
+                log_file,
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+            )
+        )
+    logging.basicConfig(level=level, format=fmt, handlers=handlers)
 
 
 @dataclass(frozen=True)

@@ -1,4 +1,4 @@
-# Orderly Copy Trading Bot (Telegram)
+# Orderly Copy Trading Bot (Telegram + Discord)
 
 Telegram bot to copy signals on Orderly. Only group admins can publish signals; registered members can copy them with their own Orderly credentials.
 
@@ -22,6 +22,11 @@ MASTER_KEY=tu_fernet_key
 ORDERLY_BASE_URL=https://api.orderly.org
 DATABASE_PATH=orderly_copytrading.db
 LOG_LEVEL=INFO
+LOG_FILE=
+LOG_MAX_BYTES=5242880
+LOG_BACKUP_COUNT=3
+BACKUP_DIR=backups
+BACKUP_KEEP_DAYS=7
 ```
 
 2. Generate `MASTER_KEY`:
@@ -68,16 +73,16 @@ https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=27
 1. Add the bot to your group.
 2. An admin sends a signal:
 ```
-/signal PERP_ETH_USDC BUY MARKET 200 2200 1950
+/signal ETH BUY MARKET 200 2200 1950
 ```
 or
 ```
-/signal PERP_ETH_USDC BUY LIMIT 200 2200 1950 2050
+/signal ETH BUY LIMIT 200 2200 1950 2050
 ```
 Or use the multiline template:
 ```
 /signalform
-SYMBOL=PERP_ETH_USDC
+SYMBOL=ETH
 SIDE=BUY
 TYPE=LIMIT
 USD=200
@@ -97,6 +102,10 @@ LIMIT=2050
    - The bot opens in private with the prefilled signal.
    - You can copy the suggested amount or a percentage.
    - For a custom amount, send `/copyusd <SIGNAL_ID> <USD>`.
+6. Status:
+```
+/status
+```
 
 ## Candlestick chart (Telegram)
 The bot fetches public TradingView-style kline data to render the candlestick chart.
@@ -104,3 +113,12 @@ The bot fetches public TradingView-style kline data to render the candlestick ch
 ## Security notes
 - Keys are stored encrypted in SQLite using `MASTER_KEY`.
 - Register your keys only in a private chat.
+
+## Maintenance (recommended)
+### Create a daily DB backup (server)
+```
+0 3 * * * cd /root/orderly-copytrading-bot && /root/orderly-copytrading-bot/.venv/bin/python scripts/backup_db.py >/var/log/orderly_backup.log 2>&1
+```
+
+### Log rotation
+Set `LOG_FILE` in `.env` to enable rotating logs on disk.

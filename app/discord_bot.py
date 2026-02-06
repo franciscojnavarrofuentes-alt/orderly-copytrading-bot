@@ -1,6 +1,7 @@
 import asyncio
 import io
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -238,6 +239,7 @@ class OrderlyDiscordBot(discord.Client):
         self.signals: dict[str, dict] = {}
         self.dev_guild_id = dev_guild_id
         self.pending_adjust: dict[str, dict] = {}
+        self.started_at = datetime.now(timezone.utc)
 
     async def setup_hook(self) -> None:
         if self.dev_guild_id:
@@ -689,7 +691,8 @@ def register_discord_commands(bot: OrderlyDiscordBot) -> None:
             "/register (DM only) - save your Orderly keys\n"
             "/signalform - create a signal (admins only)\n"
             "/sync - refresh bot commands for this server (admins only)\n"
-            "/ping - check bot status\n\n"
+            "/ping - check bot status\n"
+            "/status - show bot status\n\n"
             "Signalform fields:\n"
             "Symbol (ticker only), Side, Type, Size (USD), TP, SL, Limit (only if Type=LIMIT)"
         )
@@ -698,6 +701,22 @@ def register_discord_commands(bot: OrderlyDiscordBot) -> None:
     @bot.tree.command(name="ping", description="Check if the bot is alive")
     async def ping(interaction: discord.Interaction) -> None:
         await interaction.response.send_message("pong", ephemeral=True)
+
+    @bot.tree.command(name="status", description="Show bot status")
+    async def status(interaction: discord.Interaction) -> None:
+        uptime = datetime.now(timezone.utc) - bot.started_at
+        db_path = bot.storage.database_path
+        try:
+            size = os.path.getsize(db_path)
+        except OSError:
+            size = 0
+        await interaction.response.send_message(
+            "Status:\n"
+            f"Uptime: {uptime}\n"
+            f"DB: {db_path}\n"
+            f"DB size: {size} bytes",
+            ephemeral=True,
+        )
 
     @bot.tree.command(name="sync", description="Sync bot commands to this server (admins only)")
     async def sync_commands(interaction: discord.Interaction) -> None:

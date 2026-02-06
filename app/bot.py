@@ -1,7 +1,9 @@
 import asyncio
 import logging
+import os
 import re
 import time
+from datetime import datetime, timezone
 import uuid
 from typing import Optional
 
@@ -410,12 +412,30 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/signalwizard - guided signal (admins only)\n"
         "/cancel - cancelar flujo guiado\n"
         "/copyusd <SIGNAL_ID> <USD> (solo en privado)\n"
+        "/status - estado del bot\n"
         "/ping - comprobar que estoy vivo"
     )
 
 
 async def ping_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("pong")
+
+
+async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    started_at: datetime = context.bot_data.get("started_at", datetime.now(timezone.utc))
+    uptime = datetime.now(timezone.utc) - started_at
+    storage: Storage = context.bot_data["storage"]
+    db_path = storage.database_path
+    try:
+        size = os.path.getsize(db_path)
+    except OSError:
+        size = 0
+    await update.message.reply_text(
+        "Status:\n"
+        f"Uptime: {uptime}\n"
+        f"DB: {db_path}\n"
+        f"DB size: {size} bytes"
+    )
 
 
 async def register_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1105,10 +1125,12 @@ def build_application(
     application.bot_data["storage"] = storage
     application.bot_data["orderly_client"] = orderly_client
     application.bot_data["bot_username"] = bot_username
+    application.bot_data["started_at"] = datetime.now(timezone.utc)
 
     application.add_handler(CommandHandler("start", start_handler))
     application.add_handler(CommandHandler("help", help_handler))
     application.add_handler(CommandHandler("ping", ping_handler))
+    application.add_handler(CommandHandler("status", status_handler))
     application.add_handler(CommandHandler("register", register_handler))
     application.add_handler(CommandHandler("follow", follow_handler))
     application.add_handler(CommandHandler("unfollow", unfollow_handler))
