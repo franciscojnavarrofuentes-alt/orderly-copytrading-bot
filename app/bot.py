@@ -816,12 +816,13 @@ async def copy_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
     parts = query.data.split(":")
     action = parts[0]
-    signal_id = parts[1]
+    signal_id = parts[1] if len(parts) > 1 else None
     signals = context.bot_data.get("signals", {})
-    signal = signals.get(signal_id)
-    if not signal:
-        await query.edit_message_text("This signal is no longer available.")
-        return
+    signal = signals.get(signal_id) if signal_id else None
+    if action not in {"adjust_confirm", "adjust_cancel"}:
+        if not signal:
+            await query.edit_message_text("This signal is no longer available.")
+            return
 
     if action == "custom":
         await query.message.reply_text(
@@ -849,6 +850,35 @@ async def copy_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return
 
+    if action == "adjust_confirm":
+        pending = context.user_data.pop("pending_adjust", None)
+        if not pending:
+            await query.edit_message_text("No pending order to confirm.")
+            return
+        order_data = pending["order"]
+        order = OrderlyOrder(
+            symbol=order_data["symbol"],
+            side=order_data["side"],
+            order_type=order_data["order_type"],
+            order_quantity=order_data["order_quantity"],
+            order_price=order_data.get("order_price"),
+        )
+        await query.edit_message_text("Placing order...")
+        await _execute_order(
+            update,
+            context,
+            order,
+            take_profit=pending["take_profit"],
+            stop_loss=pending["stop_loss"],
+            confirmation_text=pending["confirmation"],
+        )
+        return
+
+    if action == "adjust_cancel":
+        context.user_data.pop("pending_adjust", None)
+        await query.edit_message_text("Order cancelled.")
+        return
+
 
 async def _copy_with_usd(
     update: Update,
@@ -872,6 +902,8 @@ async def _copy_with_usd(
         await update.message.reply_text("Invalid tick size for this symbol.")
         return
 
+    adjusted = False
+    adjusted_price: float | None = None
     if signal["order_type"] == "LIMIT":
         price_ref = float(signal["limit_price"])
         try:
@@ -898,10 +930,8 @@ async def _copy_with_usd(
                     adjusted = client.round_price(adjusted, price_tick, side)
                 signal["limit_price"] = adjusted
                 price_ref = adjusted
-                await update.message.reply_text(
-                    "Heads up: LIMIT price crosses the mark price. "
-                    f"Adjusted limit to ${adjusted} to avoid rejection."
-                )
+                adjusted = True
+                adjusted_price = float(adjusted)
     else:
         price_ref = await asyncio.to_thread(
             client.get_mark_price, signal["symbol"]
@@ -936,6 +966,35 @@ async def _copy_with_usd(
         f"{'Limit: ' + str(signal['limit_price']) if signal['limit_price'] else ''}\n"
         f"TP: {signal['take_profit']} | SL: {signal['stop_loss']}"
     )
+    if adjusted:
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("Confirm", callback_data="adjust_confirm"),
+                    InlineKeyboardButton("Cancel", callback_data="adjust_cancel"),
+                ]
+            ]
+        )
+        context.user_data["pending_adjust"] = {
+            "order": {
+                "symbol": order.symbol,
+                "side": order.side,
+                "order_type": order.order_type,
+                "order_quantity": order.order_quantity,
+                "order_price": order.order_price,
+            },
+            "take_profit": signal["take_profit"],
+            "stop_loss": signal["stop_loss"],
+            "confirmation": confirmation,
+        }
+        await update.message.reply_text(
+            "Heads up: LIMIT price crosses the mark price. "
+            f"I adjusted it to ${adjusted_price} to avoid rejection.\n"
+            "Do you want to place the order?",
+            reply_markup=keyboard,
+        )
+        return
+
     await _execute_order(
         update,
         context,

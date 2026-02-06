@@ -195,6 +195,22 @@ class CopyOptionsView(discord.ui.View):
         )
 
 
+class AdjustConfirmView(discord.ui.View):
+    def __init__(self, bot: "OrderlyDiscordBot", pending_id: str) -> None:
+        super().__init__(timeout=120)
+        self.bot = bot
+        self.pending_id = pending_id
+
+    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.green)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:  # noqa: ARG002
+        await self.bot.execute_adjusted(interaction, self.pending_id)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.red)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:  # noqa: ARG002
+        self.bot.pending_adjust.pop(self.pending_id, None)
+        await interaction.response.send_message("Order cancelled.", ephemeral=True)
+
+
 class CopyButtonView(discord.ui.View):
     def __init__(self, bot: "OrderlyDiscordBot", signal_id: str) -> None:
         super().__init__(timeout=None)
@@ -221,6 +237,7 @@ class OrderlyDiscordBot(discord.Client):
         self.orderly_client = orderly_client
         self.signals: dict[str, dict] = {}
         self.dev_guild_id = dev_guild_id
+        self.pending_adjust: dict[str, dict] = {}
 
     async def setup_hook(self) -> None:
         if self.dev_guild_id:
@@ -401,6 +418,31 @@ class OrderlyDiscordBot(discord.Client):
             order_price=signal.get("limit_price"),
         )
 
+        if warning_line:
+            pending_id = str(uuid.uuid4())
+            self.pending_adjust[pending_id] = {
+                "order": order,
+                "take_profit": signal["take_profit"],
+                "stop_loss": signal["stop_loss"],
+                "confirmation": (
+                    "Order will be placed with the adjusted limit.\n"
+                    f"Symbol: {signal['symbol']}\n"
+                    f"Side: {signal['side']}\n"
+                    f"Type: {signal['order_type']}\n"
+                    f"USD: {usd}\n"
+                    f"Qty: {order_quantity}\n"
+                    f"Price ref: {price_ref}\n"
+                    f"TP: {signal['take_profit']} | SL: {signal['stop_loss']}"
+                ),
+                "creds": creds,
+            }
+            await interaction.response.send_message(
+                warning_line + "Do you want to place the order?",
+                ephemeral=True,
+                view=AdjustConfirmView(self, pending_id),
+            )
+            return
+
         try:
             if order.order_type == "LIMIT":
                 algo_payload = {
@@ -555,6 +597,80 @@ class OrderlyDiscordBot(discord.Client):
 
         self.signals[signal_id] = updated
         await self.copy_with_usd(interaction, signal_id, usd)
+
+    async def execute_adjusted(self, interaction: discord.Interaction, pending_id: str) -> None:
+        pending = self.pending_adjust.pop(pending_id, None)
+        if not pending:
+            await interaction.response.send_message(
+                "No pending order to confirm.", ephemeral=True
+            )
+            return
+        order: OrderlyOrder = pending["order"]
+        creds = pending["creds"]
+        try:
+            if order.order_type == "LIMIT":
+                algo_payload = {
+                    "symbol": order.symbol,
+                    "algo_type": "BRACKET",
+                    "type": "LIMIT",
+                    "price": order.order_price,
+                    "quantity": order.order_quantity,
+                    "side": order.side,
+                    "child_orders": [
+                        {
+                            "symbol": order.symbol,
+                            "algo_type": "POSITIONAL_TP_SL",
+                            "child_orders": [
+                                {
+                                    "symbol": order.symbol,
+                                    "algo_type": "TAKE_PROFIT",
+                                    "side": "SELL" if order.side == "BUY" else "BUY",
+                                    "type": "CLOSE_POSITION",
+                                    "trigger_price": pending["take_profit"],
+                                    "reduce_only": True,
+                                },
+                                {
+                                    "symbol": order.symbol,
+                                    "algo_type": "STOP_LOSS",
+                                    "side": "SELL" if order.side == "BUY" else "BUY",
+                                    "type": "CLOSE_POSITION",
+                                    "trigger_price": pending["stop_loss"],
+                                    "reduce_only": True,
+                                },
+                            ],
+                        }
+                    ],
+                }
+                await asyncio.to_thread(
+                    self.orderly_client.create_algo_order,
+                    creds.orderly_account_id,
+                    creds.orderly_key,
+                    creds.orderly_secret,
+                    algo_payload,
+                )
+            else:
+                await asyncio.to_thread(
+                    self.orderly_client.create_order,
+                    creds.orderly_account_id,
+                    creds.orderly_key,
+                    creds.orderly_secret,
+                    order,
+                )
+        except Exception as exc:  # noqa: BLE001
+            response = getattr(exc, "response", None)
+            if response is not None:
+                error_detail = f"HTTP {response.status_code}: {response.text}"
+            else:
+                error_detail = str(exc)
+            await interaction.response.send_message(
+                f"Copy failed: {error_detail}", ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message(
+            "Order sent successfully.\n" + pending["confirmation"],
+            ephemeral=True,
+        )
 
 
 def register_discord_commands(bot: OrderlyDiscordBot) -> None:
