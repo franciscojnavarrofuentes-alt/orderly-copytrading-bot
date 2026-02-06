@@ -913,8 +913,9 @@ async def _copy_with_usd(
 
     adjusted = False
     adjusted_price: float | None = None
+    limit_price = signal.get("limit_price")
     if signal["order_type"] == "LIMIT":
-        price_ref = float(signal["limit_price"])
+        price_ref = float(limit_price)
         mark_price = signal.get("market_price")
         if mark_price is not None:
             try:
@@ -947,7 +948,7 @@ async def _copy_with_usd(
                 adjusted = mark_price
                 if price_tick > 0:
                     adjusted = client.round_price(adjusted, price_tick, side)
-                signal["limit_price"] = adjusted
+                limit_price = adjusted
                 price_ref = adjusted
                 adjusted = True
                 adjusted_price = float(adjusted)
@@ -972,7 +973,7 @@ async def _copy_with_usd(
         side=signal["side"],
         order_type=signal["order_type"],
         order_quantity=order_quantity,
-        order_price=signal.get("limit_price"),
+        order_price=limit_price,
     )
     confirmation = (
         "Resumen:\n"
@@ -982,7 +983,7 @@ async def _copy_with_usd(
         f"USD: {usd}\n"
         f"Qty: {order_quantity}\n"
         f"Precio ref: {price_ref}\n"
-        f"{'Limit: ' + str(signal['limit_price']) if signal['limit_price'] else ''}\n"
+        f"{'Limit: ' + str(limit_price) if limit_price else ''}\n"
         f"TP: {signal['take_profit']} | SL: {signal['stop_loss']}"
     )
     if adjusted:
@@ -1096,6 +1097,9 @@ def build_application(
     application.add_handler(CommandHandler("signalform", signalform_handler))
     application.add_handler(
         CallbackQueryHandler(copy_choice_handler, pattern="^(percent|custom):")
+    )
+    application.add_handler(
+        CallbackQueryHandler(copy_choice_handler, pattern="^adjust_(confirm|cancel)$")
     )
     application.add_handler(CallbackQueryHandler(wizard_button_handler, pattern="^wiz:"))
     application.add_handler(CommandHandler("copyusd", copy_handler))
