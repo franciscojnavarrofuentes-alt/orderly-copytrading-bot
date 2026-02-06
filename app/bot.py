@@ -952,6 +952,9 @@ async def _copy_with_usd(
                 price_ref = adjusted
                 adjusted = True
                 adjusted_price = float(adjusted)
+        if mark_price is None:
+            adjusted = False
+            adjusted_price = None
     else:
         price_ref = await asyncio.to_thread(
             client.get_mark_price, signal["symbol"]
@@ -1008,11 +1011,14 @@ async def _copy_with_usd(
             "confirmation": confirmation,
         }
         message = update.effective_message
+        adjusted_text = (
+            "Heads up: LIMIT price crosses the mark price. "
+            f"I adjusted it to ${adjusted_price} to avoid rejection.\n"
+            "Do you want to place the order?"
+        )
         if message is not None:
             await message.reply_text(
-                "Heads up: LIMIT price crosses the mark price. "
-                f"I adjusted it to ${adjusted_price} to avoid rejection.\n"
-                "Do you want to place the order?",
+                adjusted_text,
                 reply_markup=keyboard,
             )
         else:
@@ -1020,11 +1026,7 @@ async def _copy_with_usd(
             if user is not None:
                 await context.bot.send_message(
                     chat_id=user.id,
-                    text=(
-                        "Heads up: LIMIT price crosses the mark price. "
-                        f"I adjusted it to ${adjusted_price} to avoid rejection.\n"
-                        "Do you want to place the order?"
-                    ),
+                    text=adjusted_text,
                     reply_markup=keyboard,
                 )
         return
