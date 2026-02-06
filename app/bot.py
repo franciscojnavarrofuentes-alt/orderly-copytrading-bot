@@ -916,12 +916,20 @@ async def _copy_with_usd(
     if signal["order_type"] == "LIMIT":
         price_ref = float(signal["limit_price"])
         mark_price = signal.get("market_price")
+        if mark_price is not None:
+            try:
+                mark_price = float(mark_price)
+            except (TypeError, ValueError):
+                mark_price = None
         if mark_price is None:
             try:
                 mark_price = await asyncio.to_thread(
                     client.get_mark_price, signal["symbol"]
                 )
             except Exception:  # noqa: BLE001
+                mark_price = None
+        if mark_price is not None and price_ref > 0:
+            if mark_price < price_ref * 0.2 or mark_price > price_ref * 5:
                 mark_price = None
         if mark_price is not None:
             side = str(signal["side"]).upper()
