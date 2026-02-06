@@ -696,6 +696,25 @@ async def _execute_order(
         return
 
     try:
+        if order.order_type == "LIMIT" and order.order_price is not None:
+            try:
+                mark_price = await asyncio.to_thread(
+                    client.get_mark_price, order.symbol
+                )
+            except Exception:  # noqa: BLE001
+                mark_price = None
+            if mark_price is not None:
+                if order.side == "BUY" and order.order_price > mark_price:
+                    await _send_reply(
+                        "Heads up: LIMIT price is above the mark price. "
+                        "Your order will execute at market."
+                    )
+                elif order.side == "SELL" and order.order_price < mark_price:
+                    await _send_reply(
+                        "Heads up: LIMIT price is below the mark price. "
+                        "Your order will execute at market."
+                    )
+
         if order.order_type == "LIMIT":
             close_side = "SELL" if order.side == "BUY" else "BUY"
             algo_payload = {

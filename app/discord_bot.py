@@ -356,6 +356,28 @@ class OrderlyDiscordBot(discord.Client):
             order_price=signal.get("limit_price"),
         )
 
+        warning_line = ""
+        if order.order_type == "LIMIT" and order.order_price is not None:
+            mark_price = signal.get("market_price")
+            if mark_price is None:
+                try:
+                    mark_price = await asyncio.to_thread(
+                        self.orderly_client.get_mark_price, signal["symbol"]
+                    )
+                except Exception:  # noqa: BLE001
+                    mark_price = None
+            if mark_price is not None:
+                if order.side == "BUY" and order.order_price > mark_price:
+                    warning_line = (
+                        "Heads up: LIMIT price is above the mark price. "
+                        "Your order will execute at market.\n\n"
+                    )
+                elif order.side == "SELL" and order.order_price < mark_price:
+                    warning_line = (
+                        "Heads up: LIMIT price is below the mark price. "
+                        "Your order will execute at market.\n\n"
+                    )
+
         try:
             if order.order_type == "LIMIT":
                 algo_payload = {
@@ -448,7 +470,8 @@ class OrderlyDiscordBot(discord.Client):
             return
 
         confirmation = (
-            "Order sent successfully.\n"
+            warning_line
+            + "Order sent successfully.\n"
             f"Symbol: {signal['symbol']}\n"
             f"Side: {signal['side']}\n"
             f"Type: {signal['order_type']}\n"
