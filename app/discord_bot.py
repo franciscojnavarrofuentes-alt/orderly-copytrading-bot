@@ -348,16 +348,8 @@ class OrderlyDiscordBot(discord.Client):
             )
             return
 
-        order = OrderlyOrder(
-            symbol=signal["symbol"],
-            side=signal["side"],
-            order_type=signal["order_type"],
-            order_quantity=order_quantity,
-            order_price=signal.get("limit_price"),
-        )
-
         warning_line = ""
-        if order.order_type == "LIMIT" and order.order_price is not None:
+        if signal["order_type"] == "LIMIT" and signal.get("limit_price") is not None:
             mark_price = signal.get("market_price")
             if mark_price is None:
                 try:
@@ -367,16 +359,47 @@ class OrderlyDiscordBot(discord.Client):
                 except Exception:  # noqa: BLE001
                     mark_price = None
             if mark_price is not None:
-                if order.side == "BUY" and order.order_price > mark_price:
-                    warning_line = (
-                        "Heads up: LIMIT price is above the mark price. "
-                        "Your order will execute at market.\n\n"
+                side = str(signal["side"]).upper()
+                crosses = (
+                    side == "BUY" and float(signal["limit_price"]) > mark_price
+                ) or (
+                    side == "SELL" and float(signal["limit_price"]) < mark_price
+                )
+                if crosses:
+                    price_tick = float(
+                        rules.get("price_tick")
+                        or rules.get("quote_tick")
+                        or 0
                     )
-                elif order.side == "SELL" and order.order_price < mark_price:
-                    warning_line = (
-                        "Heads up: LIMIT price is below the mark price. "
-                        "Your order will execute at market.\n\n"
+                    adjusted = mark_price
+                    if price_tick > 0:
+                        adjusted = self.orderly_client.round_price(
+                            adjusted, price_tick, side
+                        )
+                    signal["limit_price"] = adjusted
+                    price_ref = adjusted
+                    order_quantity = usd / price_ref
+                    order_quantity = self.orderly_client.round_quantity(
+                        order_quantity, base_tick
                     )
+                    if order_quantity <= 0:
+                        await interaction.response.send_message(
+                            "Order size is too small for this symbol's tick.",
+                            ephemeral=True,
+                        )
+                        return
+                    warning_line = (
+                        "Heads up: LIMIT price crosses the mark price. "
+                        f"Adjusted limit to ${adjusted} to avoid rejection.\n\n"
+                    )
+
+        order = OrderlyOrder(
+            symbol=signal["symbol"],
+            side=signal["side"],
+            order_type=signal["order_type"],
+            order_quantity=order_quantity,
+            order_price=signal.get("limit_price"),
+        )
 
         try:
             if order.order_type == "LIMIT":

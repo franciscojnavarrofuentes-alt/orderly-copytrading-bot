@@ -5,7 +5,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, ROUND_DOWN, ROUND_UP
 
 import base58
 import nacl.signing
@@ -87,6 +87,15 @@ class OrderlyClient:
         q = Decimal(str(quantity))
         tick = Decimal(str(base_tick))
         rounded = (q / tick).to_integral_value(rounding=ROUND_DOWN) * tick
+        return float(rounded)
+
+    def round_price(self, price: float, price_tick: float, side: str) -> float:
+        p = Decimal(str(price))
+        tick = Decimal(str(price_tick))
+        if side.upper() == "SELL":
+            rounded = (p / tick).to_integral_value(rounding=ROUND_UP) * tick
+        else:
+            rounded = (p / tick).to_integral_value(rounding=ROUND_DOWN) * tick
         return float(rounded)
 
     def create_order(

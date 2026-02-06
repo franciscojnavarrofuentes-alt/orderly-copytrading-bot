@@ -874,6 +874,34 @@ async def _copy_with_usd(
 
     if signal["order_type"] == "LIMIT":
         price_ref = float(signal["limit_price"])
+        try:
+            mark_price = await asyncio.to_thread(
+                client.get_mark_price, signal["symbol"]
+            )
+        except Exception:  # noqa: BLE001
+            mark_price = None
+        if mark_price is not None:
+            side = str(signal["side"]).upper()
+            crosses = (
+                side == "BUY" and price_ref > mark_price
+            ) or (
+                side == "SELL" and price_ref < mark_price
+            )
+            if crosses:
+                price_tick = float(
+                    rules.get("price_tick")
+                    or rules.get("quote_tick")
+                    or 0
+                )
+                adjusted = mark_price
+                if price_tick > 0:
+                    adjusted = client.round_price(adjusted, price_tick, side)
+                signal["limit_price"] = adjusted
+                price_ref = adjusted
+                await update.message.reply_text(
+                    "Heads up: LIMIT price crosses the mark price. "
+                    f"Adjusted limit to ${adjusted} to avoid rejection."
+                )
     else:
         price_ref = await asyncio.to_thread(
             client.get_mark_price, signal["symbol"]
