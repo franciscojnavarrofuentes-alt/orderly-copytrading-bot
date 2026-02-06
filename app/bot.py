@@ -886,20 +886,29 @@ async def _copy_with_usd(
     signal: dict,
     usd: float,
 ) -> None:
+    async def _safe_reply(text: str) -> None:
+        message = update.effective_message
+        if message is not None:
+            await message.reply_text(text)
+            return
+        user = update.effective_user
+        if user is not None:
+            await context.bot.send_message(chat_id=user.id, text=text)
+
     if usd <= 0:
-        await update.message.reply_text("USD must be greater than 0.")
+        await _safe_reply("USD must be greater than 0.")
         return
 
     client: OrderlyClient = context.bot_data["orderly_client"]
     try:
         rules = await asyncio.to_thread(client.get_order_rules, signal["symbol"])
     except Exception as exc:  # noqa: BLE001
-        await update.message.reply_text(f"Could not fetch market rules: {exc}")
+        await _safe_reply(f"Could not fetch market rules: {exc}")
         return
 
     base_tick = float(rules.get("base_tick", 0) or 0)
     if base_tick <= 0:
-        await update.message.reply_text("Invalid tick size for this symbol.")
+        await _safe_reply("Invalid tick size for this symbol.")
         return
 
     adjusted = False
@@ -940,13 +949,13 @@ async def _copy_with_usd(
         )
 
     if price_ref <= 0:
-        await update.message.reply_text("Invalid reference price.")
+        await _safe_reply("Invalid reference price.")
         return
 
     order_quantity = usd / price_ref
     order_quantity = client.round_quantity(order_quantity, base_tick)
     if order_quantity <= 0:
-        await update.message.reply_text(
+        await _safe_reply(
             "Order size is too small for this symbol's tick."
         )
         return
@@ -989,12 +998,26 @@ async def _copy_with_usd(
             "stop_loss": signal["stop_loss"],
             "confirmation": confirmation,
         }
-        await update.message.reply_text(
-            "Heads up: LIMIT price crosses the mark price. "
-            f"I adjusted it to ${adjusted_price} to avoid rejection.\n"
-            "Do you want to place the order?",
-            reply_markup=keyboard,
-        )
+        message = update.effective_message
+        if message is not None:
+            await message.reply_text(
+                "Heads up: LIMIT price crosses the mark price. "
+                f"I adjusted it to ${adjusted_price} to avoid rejection.\n"
+                "Do you want to place the order?",
+                reply_markup=keyboard,
+            )
+        else:
+            user = update.effective_user
+            if user is not None:
+                await context.bot.send_message(
+                    chat_id=user.id,
+                    text=(
+                        "Heads up: LIMIT price crosses the mark price. "
+                        f"I adjusted it to ${adjusted_price} to avoid rejection.\n"
+                        "Do you want to place the order?"
+                    ),
+                    reply_markup=keyboard,
+                )
         return
 
     await _execute_order(
